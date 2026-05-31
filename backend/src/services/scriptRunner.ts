@@ -6,7 +6,6 @@ import { getPool, sql } from '../db/sql';
 import { env } from '../config/env';
 import { addExecutionLog } from './dbLogService';
 import { emitExecutionLog } from './logBus';
-import { runExecutionValidations } from './executionValidationService';
 
 function resolveScriptPath(filePath: string): string {
   if (path.isAbsolute(filePath)) {
@@ -255,14 +254,6 @@ export async function runScript(
     }
 
     const status = code === 0 ? 'Exitoso' : 'Error';
-    if (code === 0) {
-      await runExecutionValidations(
-          executionId,
-          scriptId,
-          finalParameters
-      );
-    }
-    
     const msg = `Proceso finalizado con código ${code}`;
 
     await addExecutionLog(
