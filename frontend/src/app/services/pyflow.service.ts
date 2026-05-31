@@ -388,4 +388,7 @@ export class PyflowService {
     return this.http.delete(`${this.apiUrl}/settings/global-variables/${id}`);
   }
   
+  deleteScriptDefinitively(scriptId: number) {
+    return this.http.delete(`/api/scripts/${scriptId}/definitive`);
+  }
 }

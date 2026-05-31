@@ -16,12 +16,8 @@ if (!fs.existsSync(scriptsDir)) {
 }
 
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, scriptsDir);
-  },
-  filename: (_req, file, cb) => {
-    cb(null, path.basename(file.originalname));
-  }
+  destination: (_req, _file, cb) => cb(null, scriptsDir),
+  filename: (_req, file, cb) => cb(null, path.basename(file.originalname))
 });
 
 const upload = multer({ storage });
@@ -40,10 +36,8 @@ function extractPyflowParams(content: string): Record<string, any> {
   let braceEnd = -1;
 
   for (let i = braceStart; i < content.length; i++) {
-    const char = content[i];
-
-    if (char === '{') depth++;
-    if (char === '}') depth--;
+    if (content[i] === '{') depth++;
+    if (content[i] === '}') depth--;
 
     if (depth === 0) {
       braceEnd = i;
@@ -72,6 +66,7 @@ function extractPyflowParams(content: string): Record<string, any> {
 router.get('/', async (_req, res, next) => {
   try {
     const pool = await getPool();
+
     const result = await pool.request().query(`
       SELECT
         id,
@@ -164,11 +159,9 @@ router.post('/', upload.single('file'), async (req, res, next) => {
           .input('script_id', sql.Int, scriptId)
           .input('param_key', sql.NVarChar(150), key)
           .input('param_value', sql.NVarChar(1000), String(config.default ?? ''))
-          //.input('param_value', sql.NVarChar(1000), config.default ?? '') --- POR LÍNEA DE ARRIBA ---
           .input('param_type', sql.NVarChar(30), 'env')
           .input('control_type', sql.NVarChar(30), config.type ?? 'text')
           .input('is_secret', sql.Bit, 0)
-          //.input('is_secret', sql.Bit, config.is_secret ? 1 : 0) --- POR LÍNEA DE ARRIBA ---
           .input('description', sql.NVarChar(500), config.description || config.label || null)
           .input('label', sql.NVarChar(255), config.label || key)
           .input('options_json', sql.NVarChar(sql.MAX), config.options ? JSON.stringify(config.options) : null)
@@ -225,7 +218,8 @@ router.get('/:id/parameters', async (req, res, next) => {
           control_type,
           label,
           options_json,
-          is_required
+          is_required,
+          global_key
         FROM dbo.ScriptParameters
         WHERE script_id = @script_id
         ORDER BY id
@@ -274,6 +268,109 @@ router.delete('/:id', async (req, res, next) => {
 
     res.json({ ok: true });
   } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/:id/definitive', async (req, res, next) => {
+  const pool = await getPool();
+  const scriptId = Number(req.params.id);
+
+  if (!scriptId) {
+    return res.status(400).json({ message: 'ID de script inválido.' });
+  }
+
+  const tx = new sql.Transaction(pool);
+
+  try {
+    const scriptResult = await pool.request()
+      .input('id', sql.Int, scriptId)
+      .query(`
+        SELECT TOP 1 id, file_path
+        FROM dbo.Scripts
+        WHERE id = @id
+      `);
+
+    if (!scriptResult.recordset.length) {
+      return res.status(404).json({ message: 'Script no encontrado.' });
+    }
+
+    const filePath = scriptResult.recordset[0].file_path;
+
+    await tx.begin();
+
+    const request = new sql.Request(tx);
+    request.input('script_id', sql.Int, scriptId);
+
+    await request.query(`
+      DELETE FROM dbo.ScheduleParameters
+      WHERE schedule_id IN (
+        SELECT id FROM dbo.Schedules WHERE script_id = @script_id
+      );
+
+      DELETE FROM dbo.Schedules
+      WHERE script_id = @script_id;
+
+      DELETE FROM dbo.ScriptParameters
+      WHERE script_id = @script_id;
+
+      DELETE FROM dbo.ScriptVersions
+      WHERE script_id = @script_id;
+
+      DELETE FROM dbo.ExecutionLogs
+      WHERE execution_id IN (
+        SELECT id FROM dbo.ScriptExecutions WHERE script_id = @script_id
+      );
+
+      DELETE FROM dbo.ExecutionParameters
+      WHERE execution_id IN (
+        SELECT id FROM dbo.ScriptExecutions WHERE script_id = @script_id
+      );
+
+      DELETE FROM dbo.ExecutionFiles
+      WHERE execution_id IN (
+        SELECT id FROM dbo.ScriptExecutions WHERE script_id = @script_id
+      );
+
+      DELETE FROM dbo.ExecutionQueue
+      WHERE script_id = @script_id;
+
+      DELETE FROM dbo.ScriptExecutions
+      WHERE script_id = @script_id;
+
+      DELETE FROM dbo.Scripts
+      WHERE id = @script_id;
+    `);
+
+    await tx.commit();
+
+    if (filePath) {
+      const fullPath = path.isAbsolute(filePath)
+        ? filePath
+        : path.resolve(env.runtime.scriptsDir, filePath);
+
+      const allowedDir = path.resolve(env.runtime.scriptsDir);
+
+      if (!fullPath.startsWith(allowedDir)) {
+        return res.status(400).json({
+          message: 'Ruta de archivo fuera del directorio permitido.'
+        });
+      }
+
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      message: 'Script eliminado definitivamente.'
+    });
+  } catch (err) {
+    try {
+      await tx.rollback();
+    } catch {}
+
     next(err);
   }
 });

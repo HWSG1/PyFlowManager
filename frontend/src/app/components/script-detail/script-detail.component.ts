@@ -21,10 +21,7 @@ import { PyflowService } from '../../services/pyflow.service';
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
             <div class="p-2.5 bg-blue-600/10 text-blue-400 rounded-xl border border-blue-500/20">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-              </svg>
+              📄
             </div>
 
             <div>
@@ -37,14 +34,14 @@ import { PyflowService } from '../../services/pyflow.service';
             <button
               (click)="runScript()"
               [disabled]="isRunning"
-              class="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-1.5 shadow transition-all">
+              class="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-xs px-4 py-2.5 rounded-lg">
               ▶ Ejecutar Ahora
             </button>
 
             <button
               (click)="cancelExecution()"
               [disabled]="!isRunning"
-              class="bg-slate-800 hover:bg-rose-900/60 disabled:opacity-50 disabled:cursor-not-allowed text-slate-300 border border-slate-700/80 font-semibold text-xs px-4 py-2.5 rounded-lg flex items-center gap-1.5 transition-all">
+              class="bg-slate-800 hover:bg-rose-900/60 disabled:opacity-50 disabled:cursor-not-allowed text-slate-300 border border-slate-700 font-semibold text-xs px-4 py-2.5 rounded-lg">
               ✕ Cancelar Ejecución
             </button>
           </div>
@@ -61,7 +58,7 @@ import { PyflowService } from '../../services/pyflow.service';
           <div class="bg-slate-950 border border-slate-800 p-5 rounded-xl shrink-0">
             <h4 class="font-semibold text-white text-sm mb-3">Estado de Ejecución Actual</h4>
 
-            <div class="flex items-center justify-between p-3 bg-slate-900 border border-slate-800/80 rounded-lg">
+            <div class="flex items-center justify-between p-3 bg-slate-900 border border-slate-800 rounded-lg">
               <div class="flex items-center gap-2">
                 <span class="w-3 h-3 rounded-full" [class]="isRunning ? 'bg-blue-500 animate-pulse' : 'bg-slate-500'"></span>
                 <span class="font-semibold text-sm text-slate-200">{{ statusText }}</span>
@@ -92,7 +89,6 @@ import { PyflowService } from '../../services/pyflow.service';
             } @else {
               <div class="flex flex-col gap-3">
                 @for (param of scriptParams; track param.id) {
-
                   @if (isGlobalParam(param)) {
                     <div class="border border-emerald-900/60 bg-emerald-950/20 rounded-lg p-3">
                       <div class="text-xs text-emerald-400 font-semibold">
@@ -121,42 +117,30 @@ import { PyflowService } from '../../services/pyflow.service';
                           }
                         </select>
                       } @else if (param.control_type === 'date') {
-                        <input
-                          type="date"
-                          [(ngModel)]="paramValues[param.param_key]"
+                        <input type="date" [(ngModel)]="paramValues[param.param_key]"
                           class="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
                       } @else if (param.control_type === 'datetime') {
-                        <input
-                          type="datetime-local"
-                          [(ngModel)]="paramValues[param.param_key]"
+                        <input type="datetime-local" [(ngModel)]="paramValues[param.param_key]"
                           class="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
                       } @else if (param.control_type === 'number') {
-                        <input
-                          type="number"
-                          [(ngModel)]="paramValues[param.param_key]"
+                        <input type="number" [(ngModel)]="paramValues[param.param_key]"
                           class="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
                       } @else if (param.control_type === 'textarea') {
-                        <textarea
-                          rows="3"
-                          [(ngModel)]="paramValues[param.param_key]"
-                          class="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
-                        </textarea>
+                        <textarea rows="3" [(ngModel)]="paramValues[param.param_key]"
+                          class="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500"></textarea>
                       } @else {
-                        <input
-                          type="text"
-                          [(ngModel)]="paramValues[param.param_key]"
+                        <input type="text" [(ngModel)]="paramValues[param.param_key]"
                           class="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
                       }
                     </div>
                   }
-
                 }
               </div>
             }
           </div>
 
           <!-- Script Info -->
-          <div class="bg-slate-950 border border-slate-800 p-5 rounded-xl shrink-0 mb-2">
+          <div class="bg-slate-950 border border-slate-800 p-5 rounded-xl shrink-0">
             <h4 class="font-semibold text-white text-sm mb-3">Información del Script</h4>
 
             <div class="flex flex-col gap-2 text-xs">
@@ -190,6 +174,50 @@ import { PyflowService } from '../../services/pyflow.service';
                 <span class="text-slate-200 font-medium">{{ script?.avgDuration }}</span>
               </div>
             </div>
+          </div>
+
+          <!-- Danger Zone -->
+          <div class="bg-rose-950/20 border border-rose-900/60 p-5 rounded-xl shrink-0 mb-2">
+            <h4 class="font-semibold text-rose-300 text-sm mb-2">Zona peligrosa</h4>
+
+            <p class="text-xs text-slate-400 mb-4">
+              Esta acción eliminará definitivamente el script, sus versiones y el archivo físico.
+            </p>
+
+            <button
+              (click)="showDeleteConfirm = true"
+              class="w-full bg-rose-600/20 hover:bg-rose-600/30 border border-rose-700 text-rose-300 font-semibold text-xs px-4 py-2.5 rounded-lg transition-all">
+              Eliminar Script Definitivamente
+            </button>
+
+            @if (showDeleteConfirm) {
+              <div class="mt-4 border border-rose-900 bg-slate-950 rounded-lg p-4">
+                <p class="text-xs text-slate-300 mb-3">
+                  Para confirmar, escribe <b class="text-rose-300">ELIMINAR</b>.
+                </p>
+
+                <input
+                  type="text"
+                  [(ngModel)]="deleteConfirmText"
+                  placeholder="ELIMINAR"
+                  class="w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-rose-500 mb-3">
+
+                <div class="flex justify-end gap-2">
+                  <button
+                    (click)="cancelDeleteConfirm()"
+                    class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
+                    Cancelar
+                  </button>
+
+                  <button
+                    (click)="deleteScriptDefinitively()"
+                    [disabled]="deleteConfirmText !== 'ELIMINAR'"
+                    class="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold">
+                    Eliminar
+                  </button>
+                </div>
+              </div>
+            }
           </div>
         </div>
 
@@ -278,6 +306,9 @@ export class ScriptDetailComponent implements OnInit, OnDestroy {
   progress = 0;
   timer = '--:--';
   statusText = 'Detenido / En espera';
+  showDeleteConfirm = false;
+  deleteConfirmText = '';
+
 
   consoleLines: { text: string; cls: string }[] = [
     { text: '[SYSTEM] Consola lista. Esperando ejecución...', cls: 'text-slate-500' }
@@ -616,6 +647,29 @@ export class ScriptDetailComponent implements OnInit, OnDestroy {
       loadLogs();
       this.svc.loadScripts();
     }, 2000);
+  }
+
+  cancelDeleteConfirm() {
+  this.showDeleteConfirm = false;
+  this.deleteConfirmText = '';
+}
+
+  deleteScriptDefinitively() {
+    if (!this.script || this.deleteConfirmText !== 'ELIMINAR') return;
+
+    this.svc.deleteScriptDefinitively(this.script.id).subscribe({
+      next: () => {
+        this.svc.showToast('Script eliminado definitivamente.', 'success');
+        this.svc.loadScripts();
+        this.svc.switchTab('scripts');
+      },
+      error: err => {
+        this.svc.showToast(
+          `Error eliminando script: ${err?.error?.message || err.message}`,
+          'error'
+        );
+      }
+    });
   }
   
 }
