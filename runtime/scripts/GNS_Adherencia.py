@@ -70,6 +70,8 @@ PYFLOW_PARAMS = {
     "REQUEST_TIMEOUT": {"type": "number", "label": "Timeout HTTP segundos", "required": False, "default": "120"},
     "POLL_SECONDS": {"type": "number", "label": "Segundos entre consulta de job", "required": False, "default": "30"},
     "MAX_POLL_ATTEMPTS": {"type": "number", "label": "Máximo intentos espera job", "required": False, "default": "120"},
+    "MAX_API_RETRIES": {"type": "number", "label": "Reintentos por error de red/API", "required": False, "default": "5"},
+    "FAIL_ON_MU_ERROR": {"type": "select", "label": "Marcar error si falla una Management Unit", "required": True, "options": ["true", "false"], "default": "false"},
     "DRY_RUN": {"type": "select", "label": "Modo prueba sin insertar", "required": True, "options": ["true", "false"], "default": "false"}
 }
 
@@ -163,6 +165,7 @@ class Config:
     request_timeout: int
     poll_seconds: int
     max_poll_attempts: int
+    max_api_retries: int
 
 
 def setup_logger() -> logging.Logger:
@@ -240,6 +243,7 @@ def load_config() -> Config:
         request_timeout=env_int("REQUEST_TIMEOUT", 120),
         poll_seconds=env_int("POLL_SECONDS", 30),
         max_poll_attempts=env_int("MAX_POLL_ATTEMPTS", 120),
+        max_api_retries=env_int("MAX_API_RETRIES", 5),
     )
 
 
@@ -338,18 +342,94 @@ def parse_dates(args: argparse.Namespace, tz_name: str) -> Tuple[str, str, str]:
     )
 
 
+
+def request_with_retry(
+    method: str,
+    url: str,
+    config: Config,
+    logger: logging.Logger,
+    **kwargs
+) -> requests.Response:
+    """Request HTTP con reintentos para errores temporales de red/API.
+
+    Esto evita que un ConnectionResetError o un 429/5xx haga fallar de inmediato
+    una Management Unit completa.
+    """
+    last_error = None
+    for attempt in range(1, config.max_api_retries + 1):
+        try:
+            response = requests.request(method, url, timeout=config.request_timeout, **kwargs)
+
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+                wait_seconds = int(retry_after) if retry_after and retry_after.isdigit() else min(60, 5 * attempt)
+                logger.warning(
+                    "HTTP 429 Too Many Requests | intento %s/%s | esperando %s segundos...",
+                    attempt,
+                    config.max_api_retries,
+                    wait_seconds,
+                )
+                time.sleep(wait_seconds)
+                continue
+
+            if response.status_code >= 500:
+                wait_seconds = min(60, 5 * attempt)
+                logger.warning(
+                    "HTTP %s en Genesys | intento %s/%s | esperando %s segundos...",
+                    response.status_code,
+                    attempt,
+                    config.max_api_retries,
+                    wait_seconds,
+                )
+                time.sleep(wait_seconds)
+                continue
+
+            if response.status_code >= 400:
+                logger.error("Error HTTP %s | Respuesta: %s", response.status_code, response.text[:1000])
+
+            response.raise_for_status()
+            return response
+
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            last_error = exc
+            wait_seconds = min(60, 5 * attempt)
+            logger.warning(
+                "Error temporal de conexión | intento %s/%s | %s | esperando %s segundos...",
+                attempt,
+                config.max_api_retries,
+                exc,
+                wait_seconds,
+            )
+            time.sleep(wait_seconds)
+        except Exception as exc:
+            last_error = exc
+            wait_seconds = min(60, 5 * attempt)
+            logger.warning(
+                "Error en request | intento %s/%s | %s | esperando %s segundos...",
+                attempt,
+                config.max_api_retries,
+                exc,
+                wait_seconds,
+            )
+            time.sleep(wait_seconds)
+
+    raise RuntimeError(f"No se pudo completar request después de {config.max_api_retries} intentos: {last_error}")
+
+
 def get_access_token(config: Config, logger: logging.Logger) -> str:
     logger.info("Solicitando token OAuth en Genesys Cloud...")
 
-    response = requests.post(
+    response = request_with_retry(
+        "POST",
         config.genesys_login_url,
+        config,
+        logger,
         data={
             "grant_type": "client_credentials",
             "client_id": config.genesys_client_id,
             "client_secret": config.genesys_client_secret,
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=config.request_timeout,
     )
 
     response.raise_for_status()
@@ -380,10 +460,12 @@ def get_business_units(
 
     url = f"{config.genesys_region_base_url}/api/v2/workforcemanagement/businessunits"
 
-    response = requests.get(
+    response = request_with_retry(
+        "GET",
         url,
-        headers=genesys_headers(token),
-        timeout=config.request_timeout
+        config,
+        logger,
+        headers=genesys_headers(token)
     )
 
     response.raise_for_status()
@@ -457,7 +539,8 @@ def create_adherence_job(
     token: str,
     management_unit_id: str,
     start_date: str,
-    end_date: str
+    end_date: str,
+    logger: logging.Logger
 ) -> str:
 
     url = (
@@ -476,11 +559,13 @@ def create_adherence_job(
         "timeZone": config.timezone_name
     }
 
-    response = requests.post(
+    response = request_with_retry(
+        "POST",
         url,
+        config,
+        logger,
         headers=genesys_headers(token),
-        json=body,
-        timeout=config.request_timeout
+        json=body
     )
 
     response.raise_for_status()
@@ -568,7 +653,8 @@ def wait_for_job(
 def download_job_data(
     config: Config,
     token: str,
-    job_result: Dict[str, Any]
+    job_result: Dict[str, Any],
+    logger: logging.Logger
 ) -> Dict[str, Any]:
 
     download_urls = job_result.get("downloadUrls") or []
@@ -578,10 +664,12 @@ def download_job_data(
             f"El job no devolvió downloadUrls. Respuesta: {job_result}"
         )
 
-    response = requests.get(
+    response = request_with_retry(
+        "GET",
         download_urls[0],
-        headers=genesys_headers(token),
-        timeout=config.request_timeout
+        config,
+        logger,
+        headers=genesys_headers(token)
     )
 
     response.raise_for_status()
@@ -837,6 +925,7 @@ def main() -> int:
     loaded = 0
     failed = 0
     general_errors: List[str] = []
+    management_unit_errors: List[str] = []
 
     start_time = time.time()
 
@@ -850,7 +939,7 @@ def main() -> int:
 
         logger.info("=" * 70)
         logger.info("INICIO PROCESO GNS ADHERENCIA")
-        log_params(logger, ["GENESYS_CLIENT_ID", "GENESYS_CLIENT_SECRET", "GENESYS_REGION", "HPR_HOST", "HPR_PORT", "HPR_USER", "HPR_PASSWORD", "HANA_SCHEMA", "HANA_ADHERENCIA_TABLE", "DATE", "START_DATE", "END_DATE", "START_UTC", "END_UTC", "DAYS_BACK", "DRY_RUN"])
+        log_params(logger, ["GENESYS_CLIENT_ID", "GENESYS_CLIENT_SECRET", "GENESYS_REGION", "HPR_HOST", "HPR_PORT", "HPR_USER", "HPR_PASSWORD", "HANA_SCHEMA", "HANA_ADHERENCIA_TABLE", "DATE", "START_DATE", "END_DATE", "START_UTC", "END_UTC", "DAYS_BACK", "MAX_API_RETRIES", "FAIL_ON_MU_ERROR", "DRY_RUN"])
         logger.info("Modo fecha: %s", date_mode)
         logger.info("startDate API: %s", start_date)
         logger.info("endDate API: %s", end_date)
@@ -894,7 +983,8 @@ def main() -> int:
                     token,
                     mu_id,
                     start_date,
-                    end_date
+                    end_date,
+                    logger
                 )
 
                 logger.info("Job creado correctamente: %s", job_id)
@@ -909,7 +999,8 @@ def main() -> int:
                 data = download_job_data(
                     config,
                     token,
-                    job_result
+                    job_result,
+                    logger
                 )
 
                 rows = transform_adherence_data(
@@ -936,7 +1027,7 @@ def main() -> int:
                     f"({mu_id}): {exc}"
                 )
 
-                general_errors.append(msg)
+                management_unit_errors.append(msg)
                 logger.exception(msg)
 
         total_rows = len(all_rows)
@@ -983,14 +1074,30 @@ def main() -> int:
     logger.info("Filas cargadas/actualizadas en HANA: %s", loaded)
     logger.info("Filas fallidas en carga: %s", failed)
     logger.info("Errores generales: %s", len(general_errors))
+    logger.info("Errores de Management Unit: %s", len(management_unit_errors))
 
     for err in general_errors[:20]:
-        logger.error("Detalle error: %s", err)
+        logger.error("Detalle error general: %s", err)
+
+    for err in management_unit_errors[:20]:
+        logger.error("Detalle error Management Unit: %s", err)
 
     logger.info("Duración total: %.2f segundos", duration)
     logger.info("=" * 70)
 
-    return 0 if not general_errors and failed == 0 else 1
+    fail_on_mu_error = env_bool("FAIL_ON_MU_ERROR", False)
+    has_mu_error = bool(management_unit_errors)
+
+    if general_errors or failed > 0:
+        return 1
+
+    if has_mu_error and fail_on_mu_error:
+        return 1
+
+    if has_mu_error and not fail_on_mu_error:
+        logger.warning("La ejecución finaliza OK porque FAIL_ON_MU_ERROR=false, aunque hubo Management Units con error temporal.")
+
+    return 0
 
 
 if __name__ == "__main__":
