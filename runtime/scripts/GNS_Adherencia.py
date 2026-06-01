@@ -38,7 +38,6 @@ from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
-from dotenv import load_dotenv
 from hdbcli import dbapi
 
 
@@ -218,7 +217,7 @@ def load_config() -> Config:
     correcto del proyecto es HPR_HOST, HPR_PORT, HPR_USER y HPR_PASSWORD.
     """
     try:
-        load_dotenv()
+        
     except Exception:
         pass
 

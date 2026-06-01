@@ -9,6 +9,8 @@ import executionsRoutes from './routes/executions.routes';
 import schedulesRoutes from './routes/schedules.routes';
 import settingsRoutes from './routes/settings.routes';
 import { startScheduler } from './services/schedulerService';
+import dashboardRoutes from "./routes/dashboard.routes";
+import { processExecutionQueue } from './services/executionQueue.service';
 
 fs.mkdirSync(env.runtime.scriptsDir, { recursive: true });
 fs.mkdirSync(env.runtime.logsDir, { recursive: true });
@@ -28,6 +30,7 @@ app.use('/api/scripts', scriptsRoutes);
 app.use('/api/executions', executionsRoutes);
 app.use('/api/schedules', schedulesRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
@@ -39,5 +42,12 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 app.listen(env.port, () => {
   console.log(`PyFlow backend listening on http://localhost:${env.port}`);
+
   startScheduler();
+
+  setInterval(() => {
+    processExecutionQueue();
+  }, 30000);
+
+  console.log('Execution queue processor started. Interval: 30s');
 });
