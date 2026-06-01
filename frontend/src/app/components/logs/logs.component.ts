@@ -40,6 +40,7 @@ import { Execution } from '../../models/models';
 
           <select
             [(ngModel)]="filterScript"
+            (change)="currentPage = 1"
             class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300">
 
             <option value="all">Todos los scripts</option>
@@ -60,6 +61,7 @@ import { Execution } from '../../models/models';
 
           <select
             [(ngModel)]="filterStatus"
+            (change)="currentPage = 1"
             class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300">
 
             <option value="all">Todos los estados</option>
@@ -78,6 +80,7 @@ import { Execution } from '../../models/models';
 
           <select
             [(ngModel)]="filterUser"
+            (change)="currentPage = 1"
             class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300">
 
             <option value="all">Todos los usuarios</option>
@@ -121,7 +124,7 @@ import { Execution } from '../../models/models';
 
             <tbody class="divide-y divide-slate-800/60">
 
-              @for (ex of filteredExecutions; track ex.id) {
+              @for (ex of paginatedExecutions; track ex.id) {
 
                 <tr class="hover:bg-slate-900/40 text-xs text-slate-300">
 
@@ -161,11 +164,21 @@ import { Execution } from '../../models/models';
 
                   <td class="px-6 py-3.5 text-right">
 
-                    <div class="flex gap-3 justify-end">
+                    <div class="flex gap-2 justify-end">
 
                       <button
                         (click)="svc.openExecutionParameters(ex.id)"
-                        class="text-emerald-500 hover:text-emerald-400 font-semibold">
+                        class="
+                          px-3 py-1.5
+                          text-[11px]
+                          font-semibold
+                          rounded-lg
+                          bg-emerald-950
+                          border border-emerald-800
+                          text-emerald-400
+                          hover:bg-emerald-900
+                          transition-all
+                        ">
 
                         Parámetros
 
@@ -173,9 +186,19 @@ import { Execution } from '../../models/models';
 
                       <button
                         (click)="viewLog(ex)"
-                        class="text-blue-500 hover:text-blue-400 font-semibold">
+                        class="
+                          px-3 py-1.5
+                          text-[11px]
+                          font-semibold
+                          rounded-lg
+                          bg-blue-950
+                          border border-blue-800
+                          text-blue-400
+                          hover:bg-blue-900
+                          transition-all
+                        ">
 
-                        Abrir Log
+                        Ver Log
 
                       </button>
 
@@ -204,13 +227,57 @@ import { Execution } from '../../models/models';
               }
 
             </tbody>
+            
 
           </table>
 
         </div>
+        
 
       </div>
+      <!-- Paginación -->
 
+      <div
+        class="flex items-center justify-between px-6 py-4 border-t border-slate-800 bg-slate-950">
+
+        <div class="text-xs text-slate-400">
+          Mostrando
+            {{ showingFrom }}
+              -
+            {{ showingTo }}
+              de
+            {{ filteredExecutions.length }}
+          registros
+        </div>
+
+        <div class="flex items-center gap-3">
+
+          <button
+            (click)="prevPage()"
+            [disabled]="currentPage === 1"
+            class="px-3 py-1.5 text-xs rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800 disabled:opacity-40">
+
+            ← Anterior
+
+          </button>
+
+          <span class="text-xs text-slate-400">
+            Página {{ currentPage }} de {{ totalPages || 1 }}
+          </span>
+
+          <button
+            (click)="nextPage()"
+            [disabled]="currentPage >= totalPages"
+            class="px-3 py-1.5 text-xs rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800 disabled:opacity-40">
+
+            Siguiente →
+
+          </button>
+
+        </div>
+
+      </div>
+      
       <!-- Modal Parámetros -->
 
       @if (svc.showExecutionParametersModal()) {
@@ -288,6 +355,8 @@ export class LogsComponent {
   filterScript = 'all';
   filterStatus = 'all';
   filterUser = 'all';
+  pageSize = 10;
+  currentPage = 1;
 
   constructor(public svc: PyflowService) {}
 
@@ -304,6 +373,7 @@ export class LogsComponent {
     this.filterScript = 'all';
     this.filterStatus = 'all';
     this.filterUser = 'all';
+    this.currentPage = 1;
   }
 
   viewLog(ex: Execution) {
@@ -327,6 +397,29 @@ export class LogsComponent {
     this.svc.showToast('Historial exportado como .txt');
   }
 
+
+  get paginatedExecutions() {
+    const start = (this.currentPage - 1) * this.pageSize;
+    const end = start + this.pageSize;
+    return this.filteredExecutions.slice(start, end);
+  }
+
+  get totalPages() {
+    return Math.ceil(this.filteredExecutions.length / this.pageSize);
+  }
+
+  nextPage() {
+    if (this.currentPage < this.totalPages) {
+      this.currentPage++;
+    }
+  }
+
+  prevPage() {
+    if (this.currentPage > 1) {
+      this.currentPage--;
+    }
+  }
+
   statusBadge(status: string): string {
     const map: Record<string, string> = {
       'Exitoso': 'px-2 py-0.5 rounded-full text-[10px] bg-emerald-950 border border-emerald-900 text-emerald-400 font-medium',
@@ -335,5 +428,17 @@ export class LogsComponent {
       'Cancelado': 'px-2 py-0.5 rounded-full text-[10px] bg-slate-900 border border-slate-800 text-slate-400 font-medium',
     };
     return map[status] ?? map['Cancelado'];
+  }
+
+  get showingFrom() {
+    if (this.filteredExecutions.length === 0) return 0;
+    return ((this.currentPage - 1) * this.pageSize) + 1;
+  }
+
+  get showingTo() {
+    return Math.min(
+      this.currentPage * this.pageSize,
+      this.filteredExecutions.length
+    );
   }
 }

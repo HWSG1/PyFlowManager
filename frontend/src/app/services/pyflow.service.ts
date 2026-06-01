@@ -391,4 +391,14 @@ export class PyflowService {
   deleteScriptDefinitively(scriptId: number) {
     return this.http.delete(`/api/scripts/${scriptId}/definitive`);
   }
+
+  dashboard = signal<any | null>(null);
+
+  async loadDashboard() {
+    const res = await fetch(`${this.apiUrl}/dashboard/summary`);
+    const data = await res.json();
+    this.dashboard.set(data);
+    return data;
+  }
+
 }

@@ -24,7 +24,8 @@ function resolveScriptPath(filePath: string): string {
 export async function runScript(
   scriptId: number,
   triggeredByUserId?: number,
-  parameters: Record<string, string> = {}
+  parameters: Record<string, string> = {},
+  skipQueueCheck = false,
 ): Promise<{ executionId: number }> {
   const pool = await getPool();
 
@@ -33,6 +34,7 @@ export async function runScript(
     .query(`
       SELECT TOP 1
         id,
+        environment_id,
         name,
         file_path,
         working_directory,
@@ -52,7 +54,88 @@ export async function runScript(
     throw new Error('El script está inactivo.');
   }
 
+  const environmentId = script.environment_id || 1;
+
   const resolvedPath = resolveScriptPath(script.file_path);
+
+  const maxResult = await pool.request()
+    .input('environment_id', sql.Int, environmentId)
+    .query(`
+      SELECT TOP 1 setting_value
+      FROM dbo.SystemSettings
+      WHERE environment_id = @environment_id
+        AND setting_key = 'MAX_CONCURRENT_EXECUTIONS'
+    `);
+
+  const maxConcurrentExecutions = Number(
+    maxResult.recordset[0]?.setting_value || 3
+  );
+
+  const runningResult = await pool.request().query(`
+    SELECT COUNT(*) AS running
+    FROM dbo.ScriptExecutions
+    WHERE status = 'Ejecutando'
+  `);
+
+  const running = Number(runningResult.recordset[0]?.running || 0);
+
+if (!skipQueueCheck) {
+  const environmentId = script.environment_id || 1;
+
+  const maxResult = await pool.request()
+    .input('environment_id', sql.Int, environmentId)
+    .query(`
+      SELECT TOP 1 setting_value
+      FROM dbo.SystemSettings
+      WHERE environment_id = @environment_id
+        AND setting_key = 'MAX_CONCURRENT_EXECUTIONS'
+    `);
+
+  const maxConcurrentExecutions = Number(
+    maxResult.recordset[0]?.setting_value || 3
+  );
+
+  const runningResult = await pool.request().query(`
+    SELECT COUNT(*) AS running
+    FROM dbo.ScriptExecutions
+    WHERE status = 'Ejecutando'
+  `);
+
+  const running = Number(
+    runningResult.recordset[0]?.running || 0
+  );
+
+  if (running >= maxConcurrentExecutions) {
+    const queueResult = await pool.request()
+      .input('script_id', sql.Int, scriptId)
+      .input('schedule_id', sql.Int, null)
+      .input('parameters_json', sql.NVarChar(sql.MAX), JSON.stringify(parameters || {}))
+      .input('status', sql.NVarChar(30), 'PENDING')
+      .query(`
+        INSERT INTO dbo.ExecutionQueue (
+          script_id,
+          schedule_id,
+          parameters_json,
+          status,
+          created_at
+        )
+        OUTPUT INSERTED.id
+        VALUES (
+          @script_id,
+          @schedule_id,
+          @parameters_json,
+          @status,
+          GETDATE()
+        )
+      `);
+
+    const queueId = queueResult.recordset[0]?.id;
+
+    throw new Error(
+      `La ejecución fue enviada a cola. Queue ID: ${queueId}. Límite concurrente: ${running}/${maxConcurrentExecutions}`
+    );
+  }
+}
 
   if (!fs.existsSync(resolvedPath)) {
     throw new Error(`El archivo del script no existe: ${resolvedPath}`);

@@ -2,311 +2,341 @@ import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { PyflowService } from '../../services/pyflow.service';
+import { Schedule } from '../../models/models';
 
 @Component({
   selector: 'app-schedules',
   standalone: true,
   imports: [CommonModule, FormsModule],
-template: `
-  <div class="flex flex-col gap-6">
-    <div>
-      <h1 class="text-2xl font-bold text-white">Programaciones y Automatización</h1>
-      <p class="text-sm text-slate-400">
-        Define reglas de ejecución automática usando expresiones CRON o intervalos.
-      </p>
-    </div>
-
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="flex flex-col gap-4">
-        <div class="bg-slate-950 border border-slate-800 p-5 rounded-xl flex flex-col gap-4">
-          <h3 class="font-semibold text-white flex items-center gap-2">
-            @if (svc.editingScheduleId()) {
-              Editar Programación #{{ svc.editingScheduleId() }}
-            } @else {
-              Nueva Programación
-            }
-          </h3>
-
-          <div>
-            <label class="text-xs text-slate-400 font-semibold block mb-1">Script Objetivo</label>
-            <select
-              [(ngModel)]="newSchedule.scriptId"
-              (ngModelChange)="onScriptChange()"
-              class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
-              @for (s of svc.scripts(); track s.id) {
-                <option [value]="s.id">{{ s.name }}</option>
-              }
-            </select>
-          </div>
-
-          @if (scheduleParameters.length) {
-            <div class="border border-slate-800 rounded-lg p-3 bg-slate-900/30">
-              <h4 class="text-xs font-semibold text-slate-300 mb-3">
-                Parámetros de la programación
-              </h4>
-
-              @for (p of scheduleParameters; track p.param_key) {
-                <div class="mb-3">
-                  <label class="text-xs text-slate-400 block mb-1">
-                    {{ p.label || p.param_key }}
-                    @if (p.is_required) {
-                      <span class="text-rose-400">*</span>
-                    }
-                  </label>
-
-                  @if (p.control_type === 'select') {
-                    <select
-                      [(ngModel)]="p.value"
-                      class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
-                      @for (opt of getOptions(p); track opt) {
-                        <option [value]="opt">{{ opt }}</option>
-                      }
-                    </select>
-                  } @else if (p.control_type === 'textarea') {
-                    <textarea
-                      [(ngModel)]="p.value"
-                      rows="3"
-                      class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
-                    </textarea>
-                  } @else {
-                    <input
-                      [type]="getInputType(p.control_type)"
-                      [(ngModel)]="p.value"
-                      class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
-                  }
-
-                  <p class="text-[10px] text-slate-500 mt-1 code-font">
-                    {{ p.param_key }}
-                  </p>
-                </div>
-              }
-            </div>
-          }
-
-          <div>
-            <label class="text-xs text-slate-400 font-semibold block mb-1">Tipo de Frecuencia</label>
-            <select
-              [(ngModel)]="newSchedule.frequencyType"
-              (ngModelChange)="onFrequencyChange()"
-              class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
-              <option value="daily">Diario</option>
-              <option value="hourly">Cada hora</option>
-              <option value="weekly">Semanal</option>
-              <option value="interval">Cada X minutos</option>
-              <option value="cron">CRON personalizado</option>
-            </select>
-          </div>
-
-          @if (newSchedule.frequencyType === 'daily') {
-            <div>
-              <label class="text-xs text-slate-400 font-semibold block mb-1">Hora diaria</label>
-              <input
-                type="time"
-                [(ngModel)]="newSchedule.time"
-                (ngModelChange)="buildCronFromControls()"
-                class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
-            </div>
-          }
-
-          @if (newSchedule.frequencyType === 'weekly') {
-            <div>
-              <label class="text-xs text-slate-400 font-semibold block mb-1">Día de la semana</label>
-              <select
-                [(ngModel)]="newSchedule.weekDay"
-                (ngModelChange)="buildCronFromControls()"
-                class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
-                <option value="1">Lunes</option>
-                <option value="2">Martes</option>
-                <option value="3">Miércoles</option>
-                <option value="4">Jueves</option>
-                <option value="5">Viernes</option>
-                <option value="6">Sábado</option>
-                <option value="0">Domingo</option>
-              </select>
-
-              <label class="text-xs text-slate-400 font-semibold block mt-3 mb-1">Hora</label>
-              <input
-                type="time"
-                [(ngModel)]="newSchedule.time"
-                (ngModelChange)="buildCronFromControls()"
-                class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
-            </div>
-          }
-
-          @if (newSchedule.frequencyType === 'interval') {
-            <div>
-              <label class="text-xs text-slate-400 font-semibold block mb-1">Intervalo en minutos</label>
-              <input
-                type="number"
-                min="1"
-                [(ngModel)]="newSchedule.intervalMinutes"
-                (ngModelChange)="buildCronFromControls()"
-                class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
-            </div>
-          }
-
-          <div>
-            <label class="text-xs text-slate-400 font-semibold block mb-1">Expresión CRON</label>
-            <input
-              type="text"
-              [(ngModel)]="newSchedule.cron"
-              [readonly]="newSchedule.frequencyType !== 'cron'"
-              placeholder="30 2 * * *"
-              class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs code-font text-slate-300 focus:outline-none focus:border-blue-500"
-              [class.cursor-not-allowed]="newSchedule.frequencyType !== 'cron'">
-            <p class="text-[10px] text-slate-500 mt-1">
-              Formato: minuto hora día mes día-semana
-            </p>
-          </div>
-
-          <div>
-            <label class="text-xs text-slate-400 font-semibold block mb-1">Próxima Ejecución Estimada</label>
-            <div class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-400">
-              {{ getEstimatedNextRunLabel() }}
-            </div>
-            <p class="text-[10px] text-slate-500 mt-1">
-              Este valor lo calcula el backend automáticamente al guardar.
-            </p>
-          </div>
-
-          @if (svc.editingScheduleId()) {
-            <div class="flex gap-2">
-              <button
-                (click)="saveSchedule()"
-                class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg">
-                Guardar Cambios
-              </button>
-              <button
-                (click)="cancelEdit()"
-                class="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 rounded-lg">
-                Cancelar
-              </button>
-            </div>
-          } @else {
-            <button
-              (click)="saveSchedule()"
-              class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow transition-all mt-1">
-              + Guardar Programación
-            </button>
-          }
-        </div>
+  template: `
+    <div class="flex flex-col gap-6">
+      <div>
+        <h1 class="text-2xl font-bold text-white">Programaciones y Automatización</h1>
+        <p class="text-sm text-slate-400">
+          Define reglas de ejecución automática usando expresiones CRON o intervalos.
+        </p>
       </div>
 
-      <div class="lg:col-span-2 flex flex-col gap-6">
-        <div class="bg-slate-950 border border-slate-800 p-5 rounded-xl">
-          <h3 class="font-semibold text-white mb-4">Próximas ejecuciones planificadas</h3>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="flex flex-col gap-4">
+          <div class="bg-slate-950 border border-slate-800 p-5 rounded-xl flex flex-col gap-4">
+            <h3 class="font-semibold text-white flex items-center gap-2">
+              @if (svc.editingScheduleId()) {
+                Editar Programación #{{ svc.editingScheduleId() }}
+              } @else {
+                Nueva Programación
+              }
+            </h3>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            @for (s of getActiveSchedules(); track s.id) {
-              <div class="bg-slate-900/60 border border-slate-800 p-3 rounded-lg flex items-start gap-3">
-                <div class="bg-slate-950 border border-slate-800 px-2 py-1.5 rounded text-center shrink-0">
-                  <p class="text-[10px] text-slate-500 uppercase font-bold">Próximo</p>
-                  <p class="text-xs font-bold text-amber-500">{{ s.nextRun }}</p>
-                </div>
+            <div>
+              <label class="text-xs text-slate-400 font-semibold block mb-1">Script Objetivo</label>
+              <select
+                [(ngModel)]="newSchedule.scriptId"
+                (ngModelChange)="onScriptChange()"
+                class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
+                @for (s of svc.scripts(); track s.id) {
+                  <option [value]="s.id">{{ s.name }}</option>
+                }
+              </select>
+            </div>
 
-                <div class="flex-1">
-                  <p class="text-xs font-semibold text-white">{{ s.scriptName }}</p>
-                  <span class="text-[10px] text-slate-400 bg-slate-950 border border-slate-800/80 px-1.5 py-0.5 rounded mt-1.5 inline-block">
-                    {{ s.frequency }}
-                  </span>
-                </div>
+            @if (scheduleParameters.length) {
+              <div class="border border-slate-800 rounded-lg p-3 bg-slate-900/30">
+                <h4 class="text-xs font-semibold text-slate-300 mb-3">
+                  Parámetros de la programación
+                </h4>
+
+                @for (p of scheduleParameters; track p.param_key) {
+                  <div class="mb-3">
+                    <label class="text-xs text-slate-400 block mb-1">
+                      {{ p.label || p.param_key }}
+                      @if (p.is_required) {
+                        <span class="text-rose-400">*</span>
+                      }
+                    </label>
+
+                    @if (p.control_type === 'select') {
+                      <select
+                        [(ngModel)]="p.value"
+                        class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
+                        @for (opt of getOptions(p); track opt) {
+                          <option [value]="opt">{{ opt }}</option>
+                        }
+                      </select>
+                    } @else if (p.control_type === 'textarea') {
+                      <textarea
+                        [(ngModel)]="p.value"
+                        rows="3"
+                        class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
+                      </textarea>
+                    } @else {
+                      <input
+                        [type]="getInputType(p.control_type)"
+                        [(ngModel)]="p.value"
+                        class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
+                    }
+
+                    <p class="text-[10px] text-slate-500 mt-1 code-font">
+                      {{ p.param_key }}
+                    </p>
+                  </div>
+                }
               </div>
-            } @empty {
-              <div class="md:col-span-2 text-xs text-slate-500 border border-slate-800 rounded-lg p-4">
-                No hay programaciones activas.
+            }
+
+            <div>
+              <label class="text-xs text-slate-400 font-semibold block mb-1">Tipo de Frecuencia</label>
+              <select
+                [(ngModel)]="newSchedule.frequencyType"
+                (ngModelChange)="onFrequencyChange()"
+                class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
+                <option value="daily">Diario</option>
+                <option value="hourly">Cada hora</option>
+                <option value="weekly">Semanal</option>
+                <option value="interval">Cada X minutos</option>
+                <option value="cron">CRON personalizado</option>
+              </select>
+            </div>
+
+            @if (newSchedule.frequencyType === 'daily') {
+              <div>
+                <label class="text-xs text-slate-400 font-semibold block mb-1">Hora diaria</label>
+                <input
+                  type="time"
+                  [(ngModel)]="newSchedule.time"
+                  (ngModelChange)="buildCronFromControls()"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
               </div>
+            }
+
+            @if (newSchedule.frequencyType === 'weekly') {
+              <div>
+                <label class="text-xs text-slate-400 font-semibold block mb-1">Día de la semana</label>
+                <select
+                  [(ngModel)]="newSchedule.weekDay"
+                  (ngModelChange)="buildCronFromControls()"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
+                  <option value="1">Lunes</option>
+                  <option value="2">Martes</option>
+                  <option value="3">Miércoles</option>
+                  <option value="4">Jueves</option>
+                  <option value="5">Viernes</option>
+                  <option value="6">Sábado</option>
+                  <option value="0">Domingo</option>
+                </select>
+
+                <label class="text-xs text-slate-400 font-semibold block mt-3 mb-1">Hora</label>
+                <input
+                  type="time"
+                  [(ngModel)]="newSchedule.time"
+                  (ngModelChange)="buildCronFromControls()"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
+              </div>
+            }
+
+            @if (newSchedule.frequencyType === 'interval') {
+              <div>
+                <label class="text-xs text-slate-400 font-semibold block mb-1">Intervalo en minutos</label>
+                <input
+                  type="number"
+                  min="1"
+                  [(ngModel)]="newSchedule.intervalMinutes"
+                  (ngModelChange)="buildCronFromControls()"
+                  class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
+              </div>
+            }
+
+            <div>
+              <label class="text-xs text-slate-400 font-semibold block mb-1">Expresión CRON</label>
+              <input
+                type="text"
+                [(ngModel)]="newSchedule.cron"
+                [readonly]="newSchedule.frequencyType !== 'cron'"
+                placeholder="30 2 * * *"
+                class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs code-font text-slate-300 focus:outline-none focus:border-blue-500"
+                [class.cursor-not-allowed]="newSchedule.frequencyType !== 'cron'">
+              <p class="text-[10px] text-slate-500 mt-1">
+                Formato: minuto hora día mes día-semana
+              </p>
+            </div>
+
+            <div>
+              <label class="text-xs text-slate-400 font-semibold block mb-1">Próxima Ejecución Estimada</label>
+              <div class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-400">
+                {{ getEstimatedNextRunLabel() }}
+              </div>
+              <p class="text-[10px] text-slate-500 mt-1">
+                Este valor lo calcula el backend automáticamente al guardar.
+              </p>
+            </div>
+
+            @if (svc.editingScheduleId()) {
+              <div class="flex gap-2">
+                <button
+                  (click)="saveSchedule()"
+                  class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2.5 rounded-lg">
+                  Guardar Cambios
+                </button>
+                <button
+                  (click)="cancelEdit()"
+                  class="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 rounded-lg">
+                  Cancelar
+                </button>
+              </div>
+            } @else {
+              <button
+                (click)="saveSchedule()"
+                class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold py-2.5 rounded-lg flex items-center justify-center gap-1.5 shadow transition-all mt-1">
+                + Guardar Programación
+              </button>
             }
           </div>
         </div>
 
-        <div class="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-          <div class="px-5 py-4 border-b border-slate-800 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
-            <h4 class="font-semibold text-white text-sm">
-              Cronogramas de Ejecución
-            </h4>
+        <div class="lg:col-span-2">
+          <div class="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-800 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
+              <h4 class="font-semibold text-white text-sm">
+                Cronogramas de Ejecución
+              </h4>
 
-            <div class="flex flex-col md:flex-row gap-2">
-              <input
-                type="text"
-                [(ngModel)]="scheduleNameFilter"
-                placeholder="Filtrar por nombre..."
-                class="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
+              <div class="flex flex-col md:flex-row gap-2">
+                <input
+                  type="text"
+                  [(ngModel)]="scheduleNameFilter"
+                  (ngModelChange)="currentPage = 1"
+                  placeholder="Filtrar por nombre..."
+                  class="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
 
-              <select
-                [(ngModel)]="scheduleStatusFilter"
-                class="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
-                <option value="all">Todos</option>
-                <option value="active">Activos</option>
-                <option value="paused">Inactivos</option>
-              </select>
+                <select
+                  [(ngModel)]="scheduleStatusFilter"
+                  (ngModelChange)="currentPage = 1"
+                  class="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
+                  <option value="all">Todos</option>
+                  <option value="active">Activos</option>
+                  <option value="paused">Inactivos</option>
+                </select>
+              </div>
             </div>
-          </div>
 
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-sm text-slate-300">
-              <thead class="bg-slate-900/60 text-xs font-semibold uppercase text-slate-400 border-b border-slate-800">
-                <tr>
-                  <th class="px-6 py-3.5">Script</th>
-                  <th class="px-6 py-3.5">Frecuencia</th>
-                  <th class="px-6 py-3.5">Siguiente Ejecución</th>
-                  <th class="px-6 py-3.5">Estado</th>
-                  <th class="px-6 py-3.5 text-right">Acción</th>
-                </tr>
-              </thead>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm text-slate-300">
+                <thead class="bg-slate-900/60 text-xs font-semibold uppercase text-slate-400 border-b border-slate-800">
+                  <tr>
+                    <th class="px-6 py-3.5">Script</th>
+                    <th class="px-6 py-3.5">Frecuencia</th>
+                    <th class="px-6 py-3.5">Siguiente Ejecución</th>
+                    <th class="px-6 py-3.5">Estado</th>
+                    <th class="px-6 py-3.5 text-right">Acción</th>
+                  </tr>
+                </thead>
 
-              <tbody class="divide-y divide-slate-800/60">
-                @for (s of getFilteredSchedules(); track s.id) {
-                  <tr class="hover:bg-slate-900/40 text-xs">
-                    <td class="px-6 py-3.5 code-font font-semibold text-blue-300">{{ s.scriptName }}</td>
-                    <td class="px-6 py-3.5 text-slate-400">{{ s.frequency }}</td>
-                    <td class="px-6 py-3.5 text-amber-400 font-semibold">{{ s.nextRun }}</td>
-                    <td class="px-6 py-3.5">
-                      <span
-                        class="px-2 py-0.5 rounded-full text-[10px] font-medium"
-                        [class.bg-emerald-950]="s.status === 'active'"
-                        [class.border]="true"
-                        [class.border-emerald-900]="s.status === 'active'"
-                        [class.text-emerald-400]="s.status === 'active'"
-                        [class.bg-slate-900]="s.status !== 'active'"
-                        [class.border-slate-700]="s.status !== 'active'"
-                        [class.text-slate-400]="s.status !== 'active'">
-                        {{ s.status === 'active' ? 'Activo' : 'Pausado' }}
-                      </span>
-                    </td>
+                <tbody class="divide-y divide-slate-800/60">
+                  @for (s of paginatedSchedules; track s.id) {
+                    <tr class="hover:bg-slate-900/40 text-xs">
+                      <td class="px-6 py-3.5 code-font font-semibold text-blue-300">
+                        {{ s.scriptName }}
+                      </td>
+
+                      <td class="px-6 py-3.5 text-slate-400">
+                        {{ s.frequency }}
+                      </td>
+
+                      <td class="px-6 py-3.5 text-amber-400 font-semibold">
+                        {{ s.nextRun }}
+                      </td>
+
+                      <td class="px-6 py-3.5">
+                        <span
+                          class="px-2 py-0.5 rounded-full text-[10px] font-medium"
+                          [class.bg-emerald-950]="s.status === 'active'"
+                          [class.border]="true"
+                          [class.border-emerald-900]="s.status === 'active'"
+                          [class.text-emerald-400]="s.status === 'active'"
+                          [class.bg-slate-900]="s.status !== 'active'"
+                          [class.border-slate-700]="s.status !== 'active'"
+                          [class.text-slate-400]="s.status !== 'active'">
+                          {{ s.status === 'active' ? 'Activo' : 'Pausado' }}
+                        </span>
+                      </td>
+
                       <td class="px-6 py-3.5 text-right">
-                        <div class="flex gap-3 justify-end">
+                        <div class="flex gap-2 justify-end">
                           <button
                             (click)="editSchedule(s.id)"
-                            class="text-blue-500 hover:text-blue-400 font-semibold">
+                            class="
+                              px-3 py-1.5
+                              text-[11px]
+                              font-semibold
+                              rounded-lg
+                              bg-slate-800
+                              border border-slate-700
+                              text-white
+                              hover:bg-slate-700
+                              transition-all">
                             Editar
                           </button>
+
                           <button
-                            (click)="svc.toggleScheduleStatus(s.id)"
-                            class="font-semibold"
-                            [class.text-rose-500]="s.status === 'active'"
-                            [class.hover:text-rose-400]="s.status === 'active'"
-                            [class.text-emerald-500]="s.status !== 'active'"
-                            [class.hover:text-emerald-400]="s.status !== 'active'">
+                            (click)="toggleSchedule(s)"
+                            class="
+                              px-3 py-1.5
+                              text-[11px]
+                              font-semibold
+                              rounded-lg
+                              transition-all
+                            "
+                            [ngClass]="
+                              s.status === 'active'
+                                ? 'bg-amber-950 border border-amber-800 text-amber-400 hover:bg-amber-900'
+                                : 'bg-emerald-950 border border-emerald-800 text-emerald-400 hover:bg-emerald-900'
+                            ">
                             {{ s.status === 'active' ? 'Inactivar' : 'Activar' }}
                           </button>
                         </div>
                       </td>
-                  </tr>
-                } @empty {
-                  <tr>
-                    <td colspan="5" class="px-6 py-6 text-center text-xs text-slate-500">
-                      No hay programaciones que coincidan con el filtro.
-                    </td>
-                  </tr>
-                }
-              </tbody>
-            </table>
+                    </tr>
+                  } @empty {
+                    <tr>
+                      <td colspan="5" class="px-6 py-6 text-center text-xs text-slate-500">
+                        No hay programaciones que coincidan con el filtro.
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+
+            <div class="flex items-center justify-between px-6 py-4 border-t border-slate-800 bg-slate-950">
+              <div class="text-xs text-slate-400">
+                Mostrando {{ showingFrom }} - {{ showingTo }} de {{ getFilteredSchedules().length }} programaciones
+              </div>
+
+              <div class="flex items-center gap-3">
+                <button
+                  (click)="prevPage()"
+                  [disabled]="currentPage === 1"
+                  class="px-3 py-1.5 text-xs rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800 disabled:opacity-40">
+                  ← Anterior
+                </button>
+
+                <span class="text-xs text-slate-400">
+                  Página {{ currentPage }} de {{ totalPages || 1 }}
+                </span>
+
+                <button
+                  (click)="nextPage()"
+                  [disabled]="currentPage >= totalPages"
+                  class="px-3 py-1.5 text-xs rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800 disabled:opacity-40">
+                  Siguiente →
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
-  </div>
-`
+  `
 })
 export class SchedulesComponent {
   newSchedule = {
@@ -321,6 +351,44 @@ export class SchedulesComponent {
   scheduleParameters: any[] = [];
   scheduleNameFilter = '';
   scheduleStatusFilter = 'all';
+
+
+  pageSize = 6;
+  currentPage = 1;
+
+  get paginatedSchedules() {
+    const start = (this.currentPage - 1) * this.pageSize;
+    const end = start + this.pageSize;
+    return this.getFilteredSchedules().slice(start, end);
+  }
+
+  get totalPages() {
+    return Math.ceil(this.getFilteredSchedules().length / this.pageSize);
+  }
+
+  get showingFrom() {
+    if (this.getFilteredSchedules().length === 0) return 0;
+    return ((this.currentPage - 1) * this.pageSize) + 1;
+  }
+
+  get showingTo() {
+    return Math.min(
+      this.currentPage * this.pageSize,
+      this.getFilteredSchedules().length
+    );
+  }
+
+  nextPage() {
+    if (this.currentPage < this.totalPages) {
+      this.currentPage++;
+    }
+  }
+
+  prevPage() {
+    if (this.currentPage > 1) {
+      this.currentPage--;
+    }
+  }
 
   constructor(public svc: PyflowService) {
     this.newSchedule.scriptId = svc.scripts()[0]?.id ?? 1;
@@ -576,11 +644,7 @@ export class SchedulesComponent {
     this.buildCronFromControls();
   }
 
-  getActiveSchedules() {
-    return this.svc.schedules()
-      .filter(s => s.status === 'active')
-      .slice(0, 4);
-  }
+
 
   getFilteredSchedules() {
     const name = this.scheduleNameFilter.trim().toLowerCase();
@@ -648,5 +712,11 @@ export class SchedulesComponent {
     };
 
     this.loadScriptParameters();
+  }
+
+  toggleSchedule(schedule: Schedule) {
+
+    console.log('Cambiar estado:', schedule);
+
   }
 }

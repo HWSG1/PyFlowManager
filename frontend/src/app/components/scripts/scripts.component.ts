@@ -24,10 +24,16 @@ import { Script } from '../../models/models';
 
       <div class="bg-slate-950 border border-slate-800 p-4 rounded-xl flex flex-wrap gap-4 items-center justify-between">
         <div class="flex flex-wrap items-center gap-3">
-          <input type="text" [(ngModel)]="searchTerm" placeholder="Buscar script por nombre..."
+          <input
+            type="text"
+            [(ngModel)]="searchTerm"
+            (ngModelChange)="currentPage = 1"
+            placeholder="Buscar script por nombre..."
             class="w-64 bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500">
 
-          <select [(ngModel)]="filterCategory"
+          <select
+            [(ngModel)]="filterCategory"
+            (change)="currentPage = 1"
             class="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
             <option value="all">Todas las Categorías</option>
             <option value="BI & Analytics">BI & Analytics</option>
@@ -36,7 +42,9 @@ import { Script } from '../../models/models';
             <option value="Notificaciones">Notificaciones</option>
           </select>
 
-          <select [(ngModel)]="filterStatus"
+          <select
+            [(ngModel)]="filterStatus"
+            (change)="currentPage = 1"
             class="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
             <option value="all">Todos los Estados</option>
             <option value="active">Activos</option>
@@ -65,7 +73,7 @@ import { Script } from '../../models/models';
             </thead>
 
             <tbody class="divide-y divide-slate-800/60">
-              @for (script of filteredScripts; track script.id) {
+              @for (script of paginatedScripts; track script.id) {
                 <tr class="hover:bg-slate-900/40 text-xs transition-colors">
                   <td class="px-6 py-4">
                     <span class="code-font font-semibold text-blue-300">{{ script.name }}</span>
@@ -92,10 +100,14 @@ import { Script } from '../../models/models';
 
                   <td class="px-6 py-4 text-slate-500 whitespace-nowrap">
                     {{ script.lastRun }}
-                    <span [class]="lastStatusBadge(script.lastStatus)" class="ml-2">{{ script.lastStatus }}</span>
+                    <span [class]="lastStatusBadge(script.lastStatus)" class="ml-2">
+                      {{ script.lastStatus }}
+                    </span>
                   </td>
 
-                  <td class="px-6 py-4 text-slate-400 whitespace-nowrap">{{ script.nextRun }}</td>
+                  <td class="px-6 py-4 text-slate-400 whitespace-nowrap">
+                    {{ script.nextRun }}
+                  </td>
 
                   <td class="px-6 py-4">
                     <div class="flex items-center justify-end gap-2">
@@ -130,6 +142,32 @@ import { Script } from '../../models/models';
             </tbody>
           </table>
         </div>
+
+        <div class="flex items-center justify-between px-6 py-4 border-t border-slate-800 bg-slate-950">
+          <div class="text-xs text-slate-400">
+            Mostrando {{ showingFrom }} - {{ showingTo }} de {{ filteredScripts.length }} scripts
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button
+              (click)="prevPage()"
+              [disabled]="currentPage === 1"
+              class="px-3 py-1.5 text-xs rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800 disabled:opacity-40">
+              ← Anterior
+            </button>
+
+            <span class="text-xs text-slate-400">
+              Página {{ currentPage }} de {{ totalPages || 1 }}
+            </span>
+
+            <button
+              (click)="nextPage()"
+              [disabled]="currentPage >= totalPages"
+              class="px-3 py-1.5 text-xs rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800 disabled:opacity-40">
+              Siguiente →
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   `
@@ -138,6 +176,43 @@ export class ScriptsComponent {
   searchTerm = '';
   filterCategory = 'all';
   filterStatus = 'all';
+
+  pageSize = 8;
+  currentPage = 1;
+
+  get paginatedScripts() {
+    const start = (this.currentPage - 1) * this.pageSize;
+    const end = start + this.pageSize;
+    return this.filteredScripts.slice(start, end);
+  }
+
+  get totalPages() {
+    return Math.ceil(this.filteredScripts.length / this.pageSize);
+  }
+
+  get showingFrom() {
+    if (this.filteredScripts.length === 0) return 0;
+    return ((this.currentPage - 1) * this.pageSize) + 1;
+  }
+
+  get showingTo() {
+    return Math.min(
+      this.currentPage * this.pageSize,
+      this.filteredScripts.length
+    );
+  }
+
+  nextPage() {
+    if (this.currentPage < this.totalPages) {
+      this.currentPage++;
+    }
+  }
+
+  prevPage() {
+    if (this.currentPage > 1) {
+      this.currentPage--;
+    }
+  }
 
   constructor(public svc: PyflowService) {}
 
