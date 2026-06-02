@@ -6,29 +6,23 @@ import { Script, Execution, Schedule, Toast, TabName, EnvParam } from '../models
 function formatDate(value: any): string {
   if (!value) return 'Nunca';
 
-  const str = String(value);
+  const raw = String(value);
+  const iso = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const date = new Date(iso.endsWith('Z') ? iso : `${iso}Z`);
 
-  const match = str.match(
-    /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/
-  );
-
-  if (!match) {
-    return str;
+  if (Number.isNaN(date.getTime())) {
+    return raw;
   }
 
-  const [, year, month, day, hourStr, minute] = match;
-
-  let hour = Number(hourStr);
-
-  const ampm = hour >= 12 ? 'p. m.' : 'a. m.';
-
-  hour = hour % 12;
-
-  if (hour === 0) {
-    hour = 12;
-  }
-
-  return `${day}/${month}/${year}, ${hour.toString().padStart(2, '0')}:${minute} ${ampm}`;
+  return new Intl.DateTimeFormat('es-HN', {
+    timeZone: 'America/Tegucigalpa',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  }).format(date);
 }
 
 function formatDuration(seconds: any): string {
@@ -227,20 +221,13 @@ export class PyflowService {
   }
 
   addSchedule(schedule: Partial<Schedule>) {
-    this.http.post(`${this.apiUrl}/schedules`, schedule).subscribe({
-      next: () => {
-        this.showToast('Programación guardada.');
-        this.loadSchedules();
-        this.loadScripts();
-      },
-      error: err => this.showToast(`Error guardando programación: ${err?.error?.message || err.message}`, 'error')
-    });
+    return this.http.post(`${this.apiUrl}/schedules`, schedule);
   }
 
   deleteSchedule(id: number) {
     this.http.delete(`${this.apiUrl}/schedules/${id}`).subscribe({
       next: () => {
-        this.showToast('Programación desactivada.', 'info');
+        this.showToast('Programación eliminada.', 'info');
         this.loadSchedules();
       },
       error: err => this.showToast(`Error eliminando programación: ${err?.error?.message || err.message}`, 'error')

@@ -26,6 +26,8 @@ export async function runScript(
   triggeredByUserId?: number,
   parameters: Record<string, string> = {},
   skipQueueCheck = false,
+  scheduleId?: number,
+  triggerType: 'manual' | 'schedule' | 'queue' = 'manual',
 ): Promise<{ executionId: number }> {
   const pool = await getPool();
 
@@ -58,27 +60,6 @@ export async function runScript(
 
   const resolvedPath = resolveScriptPath(script.file_path);
 
-  const maxResult = await pool.request()
-    .input('environment_id', sql.Int, environmentId)
-    .query(`
-      SELECT TOP 1 setting_value
-      FROM dbo.SystemSettings
-      WHERE environment_id = @environment_id
-        AND setting_key = 'MAX_CONCURRENT_EXECUTIONS'
-    `);
-
-  const maxConcurrentExecutions = Number(
-    maxResult.recordset[0]?.setting_value || 3
-  );
-
-  const runningResult = await pool.request().query(`
-    SELECT COUNT(*) AS running
-    FROM dbo.ScriptExecutions
-    WHERE status = 'Ejecutando'
-  `);
-
-  const running = Number(runningResult.recordset[0]?.running || 0);
-
 if (!skipQueueCheck) {
   const environmentId = script.environment_id || 1;
 
@@ -108,7 +89,7 @@ if (!skipQueueCheck) {
   if (running >= maxConcurrentExecutions) {
     const queueResult = await pool.request()
       .input('script_id', sql.Int, scriptId)
-      .input('schedule_id', sql.Int, null)
+      .input('schedule_id', sql.Int, scheduleId || null)
       .input('parameters_json', sql.NVarChar(sql.MAX), JSON.stringify(parameters || {}))
       .input('status', sql.NVarChar(30), 'PENDING')
       .query(`
@@ -193,10 +174,10 @@ if (!skipQueueCheck) {
   const startRequest = pool.request()
     .input('script_id', sql.Int, scriptId)
     .input('script_version_id', sql.Int, null)
-    .input('schedule_id', sql.Int, null)
+    .input('schedule_id', sql.Int, scheduleId || null)
     .input('triggered_by_user_id', sql.Int, triggeredByUserId || env.defaultUserId)
     .input('parent_execution_id', sql.Int, null)
-    .input('trigger_type', sql.NVarChar(20), 'manual')
+    .input('trigger_type', sql.NVarChar(20), triggerType)
     .input('command_line', sql.NVarChar(sql.MAX), commandLine)
     .input('working_directory', sql.NVarChar(1000), workingDirectory)
     .input('machine_name', sql.NVarChar(255), os.hostname())

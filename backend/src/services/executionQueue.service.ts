@@ -42,7 +42,7 @@ export async function processExecutionQueue(): Promise<void> {
 
     const pendingResult = await pool.request().query(`
       SELECT TOP 1 *
-      FROM dbo.ExecutionQueue
+      FROM dbo.ExecutionQueue WITH (READPAST)
       WHERE status = 'PENDING'
       ORDER BY created_at ASC
     `);
@@ -58,7 +58,7 @@ export async function processExecutionQueue(): Promise<void> {
       .query(`
         UPDATE dbo.ExecutionQueue
         SET status = 'RUNNING'
-        WHERE id = @id
+        WHERE id = @id AND status = 'PENDING'
       `);
 
     try {
@@ -71,8 +71,10 @@ export async function processExecutionQueue(): Promise<void> {
         queueItem.script_id,
         undefined,
         parameters,
-        true
-    );
+        true,
+        queueItem.schedule_id || undefined,
+        queueItem.schedule_id ? 'schedule' : 'queue'
+      );
 
       await pool.request()
         .input("id", sql.Int, queueItem.id)

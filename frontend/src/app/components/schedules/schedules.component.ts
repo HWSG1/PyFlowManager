@@ -34,8 +34,9 @@ import { Schedule } from '../../models/models';
                 [(ngModel)]="newSchedule.scriptId"
                 (ngModelChange)="onScriptChange()"
                 class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500">
+                <option [ngValue]="null">Seleccione un script...</option>
                 @for (s of svc.scripts(); track s.id) {
-                  <option [value]="s.id">{{ s.name }}</option>
+                  <option [ngValue]="s.id">{{ s.name }}</option>
                 }
               </select>
             </div>
@@ -291,7 +292,7 @@ import { Schedule } from '../../models/models';
                                 ? 'bg-amber-950 border border-amber-800 text-amber-400 hover:bg-amber-900'
                                 : 'bg-emerald-950 border border-emerald-800 text-emerald-400 hover:bg-emerald-900'
                             ">
-                            {{ s.status === 'active' ? 'Inactivar' : 'Activar' }}
+                            Eliminar
                           </button>
                         </div>
                       </td>
@@ -339,14 +340,14 @@ import { Schedule } from '../../models/models';
   `
 })
 export class SchedulesComponent {
-  newSchedule = {
-    scriptId: 1,
-    frequencyType: 'daily',
-    cron: '30 2 * * *',
-    time: '02:30',
-    weekDay: '1',
-    intervalMinutes: 60
-  };
+  newSchedule: {
+    scriptId: number | null;
+    frequencyType: string;
+    cron: string;
+    time: string;
+    weekDay: string;
+    intervalMinutes: number;
+  } = this.getEmptyScheduleForm();
 
   scheduleParameters: any[] = [];
   scheduleNameFilter = '';
@@ -390,10 +391,26 @@ export class SchedulesComponent {
     }
   }
 
-  constructor(public svc: PyflowService) {
-    this.newSchedule.scriptId = svc.scripts()[0]?.id ?? 1;
+  getEmptyScheduleForm() {
+    return {
+      scriptId: null as number | null,
+      frequencyType: 'daily',
+      cron: '30 2 * * *',
+      time: '02:30',
+      weekDay: '1',
+      intervalMinutes: 60
+    };
+  }
+
+  resetScheduleForm() {
+    this.svc.clearEditingSchedule();
+    this.newSchedule = this.getEmptyScheduleForm();
+    this.scheduleParameters = [];
     this.buildCronFromControls();
-    this.loadScriptParameters();
+  }
+
+  constructor(public svc: PyflowService) {
+    this.buildCronFromControls();
   }
 
   onScriptChange() {
@@ -588,6 +605,8 @@ export class SchedulesComponent {
       return;
     }
 
+    this.buildCronFromControls();
+
     if (!this.newSchedule.cron.trim()) {
       this.svc.showToast('Debe ingresar una expresión CRON.', 'error');
       return;
@@ -613,16 +632,15 @@ export class SchedulesComponent {
       parameters
     };
 
-    if (this.svc.editingScheduleId()) {
+    const editingId = this.svc.editingScheduleId();
 
-      this.svc.updateSchedule(
-        this.svc.editingScheduleId()!,
-        payload
-      ).subscribe({
+    if (editingId) {
+      this.svc.updateSchedule(editingId, payload).subscribe({
         next: () => {
           this.svc.showToast('Programación actualizada.');
           this.svc.loadSchedules();
-          this.cancelEdit();
+          this.svc.loadScripts();
+          this.resetScheduleForm();
         },
         error: err => {
           this.svc.showToast(
@@ -632,16 +650,23 @@ export class SchedulesComponent {
         }
       });
 
-    } else {
-
-      this.svc.addSchedule(payload as any);
-
+      return;
     }
 
-    this.newSchedule.frequencyType = 'daily';
-    this.newSchedule.time = '02:30';
-    this.newSchedule.cron = '30 2 * * *';
-    this.buildCronFromControls();
+    this.svc.addSchedule(payload as any).subscribe({
+      next: () => {
+        this.svc.showToast('Programación guardada.');
+        this.svc.loadSchedules();
+        this.svc.loadScripts();
+        this.resetScheduleForm();
+      },
+      error: err => {
+        this.svc.showToast(
+          `Error guardando programación: ${err?.error?.message || err.message}`,
+          'error'
+        );
+      }
+    });
   }
 
 
@@ -660,27 +685,17 @@ export class SchedulesComponent {
   }
 
   editSchedule(scheduleId: number) {
+    this.svc.getSchedule(scheduleId).subscribe({
+      next: data => {
+        const schedule = data.schedule;
 
-    this.svc.loadScheduleForEdit(scheduleId);
+        this.svc.editingScheduleId.set(scheduleId);
+        this.svc.editingScheduleData.set(data);
 
-    setTimeout(() => {
+        this.newSchedule.scriptId = Number(schedule.script_id);
+        this.newSchedule.cron = schedule.cron_expression || '';
 
-      const data = this.svc.editingScheduleData();
-
-      if (!data) return;
-
-      const schedule = data.schedule;
-
-      this.newSchedule.scriptId = schedule.script_id;
-      this.newSchedule.cron = schedule.cron_expression;
-
-      this.parseCronToControls(
-        schedule.cron_expression
-      );
-
-      this.loadScriptParameters();
-
-      setTimeout(() => {
+        this.parseCronToControls(schedule.cron_expression || '');
 
         const paramsMap: Record<string, string> = {};
 
@@ -688,35 +703,47 @@ export class SchedulesComponent {
           paramsMap[p.param_key] = p.param_value;
         }
 
-        this.scheduleParameters = this.scheduleParameters.map(p => ({
-          ...p,
-          value: paramsMap[p.param_key] ?? p.value
-        }));
-
-      }, 300);
-
-    }, 300);
+        this.svc.getScriptParameters(Number(schedule.script_id)).subscribe({
+          next: params => {
+            this.scheduleParameters = params
+              .filter(p => p.control_type !== 'global')
+              .map(p => ({
+                ...p,
+                value: paramsMap[p.param_key] ?? p.param_value ?? this.getDefaultValue(p)
+              }));
+          },
+          error: err => {
+            this.scheduleParameters = [];
+            this.svc.showToast(
+              `Error cargando parámetros: ${err?.error?.message || err.message}`,
+              'error'
+            );
+          }
+        });
+      },
+      error: err => {
+        this.svc.showToast(
+          `Error cargando programación: ${err?.error?.message || err.message}`,
+          'error'
+        );
+      }
+    });
   }
 
   cancelEdit() {
-
-    this.svc.clearEditingSchedule();
-
-    this.newSchedule = {
-      scriptId: this.svc.scripts()[0]?.id ?? 1,
-      frequencyType: 'daily',
-      cron: '30 2 * * *',
-      time: '02:30',
-      weekDay: '1',
-      intervalMinutes: 60
-    };
-
-    this.loadScriptParameters();
+    this.resetScheduleForm();
   }
 
   toggleSchedule(schedule: Schedule) {
+    const ok = confirm(`¿Desea eliminar la programación de ${schedule.scriptName}?`);
 
-    console.log('Cambiar estado:', schedule);
+    if (!ok) return;
 
+    this.svc.deleteSchedule(schedule.id);
+
+    if (this.svc.editingScheduleId() === schedule.id) {
+      this.resetScheduleForm();
+    }
   }
+
 }
