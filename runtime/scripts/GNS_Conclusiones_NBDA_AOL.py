@@ -140,9 +140,9 @@ PYFLOW_PARAMS = {
         "label": "Fin UTC exacto",
         "required": False
     },
-    "DAYS_BACK": {
+    "AUTO_START_DAY": {
         "type": "number",
-        "label": "Días hacia atrás si no se indican fechas",
+        "label": "Día inicial automático del mes",
         "required": False,
         "default": "5"
     },
@@ -181,6 +181,12 @@ PYFLOW_PARAMS = {
         "label": "Reintentos HTTP",
         "required": False,
         "default": "5"
+    },
+    "WRAPUP_FILTER_CHUNK_SIZE": {
+        "type": "number",
+        "label": "Cantidad de wrapups por bloque",
+        "required": False,
+        "default": "20"
     },
     "SEND_EMAIL": {
         "type": "select",
@@ -466,22 +472,20 @@ def parse_dates(args: argparse.Namespace, tz_name: str) -> Tuple[str, str, str, 
             end_local
         )
 
-    # Automático PyFlow: últimos N días cerrados si no se indican fechas.
-    # Ejemplo con DAYS_BACK=5 y hoy 2026-05-31:
-    #   start_local = 2026-05-26 00:00:00
-    #   end_local   = 2026-05-31 00:00:00
-    days_back = env_int("DAYS_BACK", 5)
-    if days_back <= 0:
-        raise ValueError("DAYS_BACK debe ser mayor que cero.")
+    # Automático PyFlow: desde el día configurado del mes actual hasta la fecha/hora actual.
+    # Por defecto inicia el día 5, igual que la ejecución manual original.
+    auto_start_day = env_int("AUTO_START_DAY", 5)
+    if auto_start_day < 1 or auto_start_day > 28:
+        raise ValueError("AUTO_START_DAY debe estar entre 1 y 28.")
 
-    today_local = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-    start_local = today_local - timedelta(days=days_back)
-    end_local = today_local
+    now_local = datetime.now(tz)
+    start_local = datetime(now_local.year, now_local.month, auto_start_day, 0, 0, 0, tzinfo=tz)
+    end_local = now_local
 
     return (
         to_utc_z(start_local),
         to_utc_z(end_local),
-        f"Automático últimos {days_back} días cerrados",
+        f"Automático desde día {auto_start_day} del mes actual a fecha/hora actual",
         start_local,
         end_local
     )
@@ -541,7 +545,28 @@ def request_with_retries(
                 time.sleep(wait_seconds)
                 continue
 
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except requests.HTTPError as http_exc:
+                last_exc = http_exc
+
+                # En errores 400/401/403 normalmente repetir no corrige el problema.
+                # Se registra el detalle que devuelve la API para facilitar diagnóstico en PyFlow.
+                logger.error(
+                    "Error HTTP %s en %s %s. Respuesta API: %s",
+                    response.status_code,
+                    method,
+                    url,
+                    response.text[:2000]
+                )
+
+                if response.status_code in (400, 401, 403):
+                    raise RuntimeError(
+                        f"Request falló con HTTP {response.status_code}: {response.text[:2000]}"
+                    ) from http_exc
+
+                raise
+
             return response
 
         except Exception as exc:
@@ -743,6 +768,61 @@ def ms_avg_to_seconds(stats: Dict[str, Any]) -> float:
     return round((total_sum / count) / 1000, 2)
 
 
+def chunks(items: List[str], size: int) -> List[List[str]]:
+    """Divide listas grandes para evitar rechazos 400 por filtros demasiado extensos."""
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def build_analytics_body(start_utc: str, end_utc: str, wrapup_ids_chunk: List[str]) -> Dict[str, Any]:
+    """
+    Construye el body de /analytics/conversations/aggregates/query.
+
+    Importante:
+    - Genesys no permite filtrar por varios valores en un solo predicate.
+    - Por eso se usa una cláusula OR con predicates individuales por wrapUpCode.
+    - Se consulta por bloques para evitar HTTP 400 por payload/filtro demasiado grande.
+    """
+    return {
+        "interval": f"{start_utc}/{end_utc}",
+        "granularity": "P1D",
+        "groupBy": [
+            "wrapUpCode",
+            "queueId"
+        ],
+        "metrics": [
+            "tHandle",
+            "tTalkComplete",
+            "tHeldComplete",
+            "tAcw"
+        ],
+        "filter": {
+            "type": "and",
+            "predicates": [
+                {
+                    "type": "dimension",
+                    "dimension": "mediaType",
+                    "operator": "matches",
+                    "value": "voice"
+                }
+            ],
+            "clauses": [
+                {
+                    "type": "or",
+                    "predicates": [
+                        {
+                            "type": "dimension",
+                            "dimension": "wrapUpCode",
+                            "operator": "matches",
+                            "value": wrapup_id
+                        }
+                        for wrapup_id in wrapup_ids_chunk
+                    ]
+                }
+            ]
+        }
+    }
+
+
 def query_conclusion_performance(
     config: Config,
     token: str,
@@ -769,110 +849,107 @@ def query_conclusion_performance(
 
     url = f"{config.genesys_region_base_url}/api/v2/analytics/conversations/aggregates/query"
 
-    body = {
-        "interval": f"{start_utc}/{end_utc}",
-        "granularity": "P1D",
-        "groupBy": [
-            "wrapUpCode",
-            "queueId"
-        ],
-        "metrics": [
-            "tHandle",
-            "tTalkComplete",
-            "tHeldComplete",
-            "tAcw"
-        ],
-        "filter": {
-            "type": "and",
-            "predicates": [
-                {
-                    "type": "dimension",
-                    "dimension": "mediaType",
-                    "operator": "matches",
-                    "value": "voice"
-                }
-            ]
-        }
-    }
-
-    response = request_with_retries(
-        "POST",
-        url,
-        config,
-        logger,
-        headers=genesys_headers(token),
-        json=body
-    )
-
-    data = response.json()
-    results = data.get("results") or []
-
     rows: List[Dict[str, Any]] = []
+    chunk_size = env_int("WRAPUP_FILTER_CHUNK_SIZE", 20)
+    if chunk_size <= 0:
+        chunk_size = 20
 
-    for result in results:
-        group = result.get("group") or {}
-        wrapup_id = group.get("wrapUpCode")
-        queue_id = group.get("queueId")
+    wrapup_chunks = chunks(target_wrapup_ids, chunk_size)
 
-        wrapup_name = wrapup_catalog.get(wrapup_id, "")
-        queue_name = queue_catalog.get(queue_id, "")
+    for chunk_number, wrapup_chunk in enumerate(wrapup_chunks, start=1):
+        logger.info(
+            "Consultando bloque wrapups %s/%s | códigos: %s",
+            chunk_number,
+            len(wrapup_chunks),
+            len(wrapup_chunk)
+        )
 
-        if not is_target_wrapup_name(wrapup_name):
-            continue
+        body = build_analytics_body(start_utc, end_utc, wrapup_chunk)
 
-        if not queue_name:
-            continue
+        response = request_with_retries(
+            "POST",
+            url,
+            config,
+            logger,
+            headers=genesys_headers(token),
+            json=body
+        )
 
-        for item in result.get("data") or []:
-            interval = item.get("interval") or ""
-            interval_start = ""
-            interval_end = ""
+        data = response.json()
+        results = data.get("results") or []
 
-            if "/" in interval:
-                interval_start, interval_end = interval.split("/", 1)
+        logger.info(
+            "Bloque wrapups %s/%s procesado | grupos recibidos: %s",
+            chunk_number,
+            len(wrapup_chunks),
+            len(results)
+        )
 
-            metrics = item.get("metrics") or []
+        for result in results:
+            group = result.get("group") or {}
+            wrapup_id = group.get("wrapUpCode")
+            queue_id = group.get("queueId")
 
-            t_handle = metric_stats(metrics, "tHandle")
-            t_talk = metric_stats(metrics, "tTalkComplete")
-            t_held = metric_stats(metrics, "tHeldComplete")
-            t_acw = metric_stats(metrics, "tAcw")
+            wrapup_name = wrapup_catalog.get(wrapup_id, "")
+            queue_name = queue_catalog.get(queue_id, "")
 
-            manejo_count = int(t_handle.get("count") or 0)
-            retencion_count = int(t_held.get("count") or 0)
-
-            if manejo_count == 0:
+            if not is_target_wrapup_name(wrapup_name):
                 continue
 
-            fecha_conclusion, dia_conclusion, mes_conclusion, anio_conclusion = parse_interval_start_to_local_date(
-                interval_start,
-                config.timezone_name
-            )
+            if not queue_name:
+                continue
 
-            rows.append({
-                "Inicio del intervalo": interval_start,
-                "Fin del intervalo": interval_end,
-                "Fecha conclusión": fecha_conclusion,
-                "Día": dia_conclusion,
-                "Mes": mes_conclusion,
-                "Año": anio_conclusion,
-                "ID de código de conclusión": wrapup_id,
-                "Nombre de código de conclusión": wrapup_name,
-                "ID de cola": queue_id,
-                "Nombre de cola": queue_name,
-                "Manejo medio": ms_avg_to_seconds(t_handle),
-                "Conversación media": ms_avg_to_seconds(t_talk),
-                "Retención media": ms_avg_to_seconds(t_held),
-                "ACW medio": ms_avg_to_seconds(t_acw),
-                "Manejo": manejo_count,
-                "Retención": retencion_count,
-                "conclusion": clean_conclusion_name(wrapup_name),
-                "Banca": get_banca(wrapup_name),
-            })
+            for item in result.get("data") or []:
+                interval = item.get("interval") or ""
+                interval_start = ""
+                interval_end = ""
+
+                if "/" in interval:
+                    interval_start, interval_end = interval.split("/", 1)
+
+                metrics = item.get("metrics") or []
+
+                t_handle = metric_stats(metrics, "tHandle")
+                t_talk = metric_stats(metrics, "tTalkComplete")
+                t_held = metric_stats(metrics, "tHeldComplete")
+                t_acw = metric_stats(metrics, "tAcw")
+
+                manejo_count = int(t_handle.get("count") or 0)
+                retencion_count = int(t_held.get("count") or 0)
+
+                if manejo_count == 0:
+                    continue
+
+                fecha_conclusion, dia_conclusion, mes_conclusion, anio_conclusion = parse_interval_start_to_local_date(
+                    interval_start,
+                    config.timezone_name
+                )
+
+                rows.append({
+                    "Inicio del intervalo": interval_start,
+                    "Fin del intervalo": interval_end,
+                    "Fecha conclusión": fecha_conclusion,
+                    "Día": dia_conclusion,
+                    "Mes": mes_conclusion,
+                    "Año": anio_conclusion,
+                    "ID de código de conclusión": wrapup_id,
+                    "Nombre de código de conclusión": wrapup_name,
+                    "ID de cola": queue_id,
+                    "Nombre de cola": queue_name,
+                    "Manejo medio": ms_avg_to_seconds(t_handle),
+                    "Conversación media": ms_avg_to_seconds(t_talk),
+                    "Retención media": ms_avg_to_seconds(t_held),
+                    "ACW medio": ms_avg_to_seconds(t_acw),
+                    "Manejo": manejo_count,
+                    "Retención": retencion_count,
+                    "conclusion": clean_conclusion_name(wrapup_name),
+                    "Banca": get_banca(wrapup_name),
+                })
+
+        time.sleep(config.api_sleep_seconds)
 
     logger.info("Filas analytics transformadas: %s", len(rows))
     return rows
-
 
 def build_summary(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -1168,9 +1245,9 @@ def main() -> int:
         logger.info("INICIO REPORTE CONCLUSIONES NBDA / AOL")
         log_params(logger, [
             "GENESYS_CLIENT_ID", "GENESYS_CLIENT_SECRET", "GENESYS_REGION",
-            "DATE", "START_DATE", "END_DATE", "START_UTC", "END_UTC", "DAYS_BACK",
+            "DATE", "START_DATE", "END_DATE", "START_UTC", "END_UTC", "AUTO_START_DAY",
             "GENESYS_TIMEZONE", "OUTPUT_DIR", "SEND_EMAIL", "EMAIL_TO", "EMAIL_CC",
-            "EMAIL_SUBJECT", "INCLUDE_SUMMARY_TABLE_IN_EMAIL", "GRAPH_TENANT_ID", "GRAPH_CLIENT_ID",
+            "EMAIL_SUBJECT", "INCLUDE_SUMMARY_TABLE_IN_EMAIL", "WRAPUP_FILTER_CHUNK_SIZE", "GRAPH_TENANT_ID", "GRAPH_CLIENT_ID",
             "GRAPH_CLIENT_SECRET", "GRAPH_SENDER_EMAIL", "GRAPH_AUTHORITY_URL", "GRAPH_SCOPE",
             "GRAPH_SAVE_TO_SENT_ITEMS", "DRY_RUN"
         ])

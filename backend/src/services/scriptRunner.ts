@@ -21,6 +21,13 @@ function resolveScriptPath(filePath: string): string {
   return path.resolve(env.runtime.scriptsDir, filePath);
 }
 
+function normalizeExitCode(code: number | null): number {
+  if (typeof code !== 'number') return -1;
+  if (!Number.isFinite(code)) return -1;
+  if (code < -2147483648 || code > 2147483647) return -1;
+  return Math.trunc(code);
+}
+
 export async function runScript(
   scriptId: number,
   triggeredByUserId?: number,
@@ -317,8 +324,10 @@ if (!skipQueueCheck) {
       return;
     }
 
-    const status = code === 0 ? 'Exitoso' : 'Error';
-    const msg = `Proceso finalizado con código ${code}`;
+    const exitCode = normalizeExitCode(code);
+
+    const status = exitCode === 0 ? 'Exitoso' : 'Error';
+    const msg = `Proceso finalizado con código ${exitCode}`;
 
     await addExecutionLog(
       executionId,
@@ -329,12 +338,12 @@ if (!skipQueueCheck) {
     await pool.request()
       .input('execution_id', sql.Int, executionId)
       .input('status', sql.NVarChar(20), status)
-      .input('exit_code', sql.Int, code)
-      .input('error_message', sql.NVarChar(sql.MAX), code === 0 ? null : msg)
+      .input('exit_code', sql.Int, exitCode)
+      .input('error_message', sql.NVarChar(sql.MAX), exitCode === 0 ? null : msg)
       .execute('dbo.usp_FinishScriptExecution');
 
     emitExecutionLog(executionId, {
-      level: code === 0 ? 'INFO' : 'ERROR',
+      level: exitCode === 0 ? 'INFO' : 'ERROR',
       message: msg,
       done: true,
       status
